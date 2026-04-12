@@ -9,9 +9,9 @@ from app import models  # noqa: F401 - モデルをBaseに登録するために�
 
 
 def main():
-    print("Creating tables...")
+    print("テーブル作成開始...")
     Base.metadata.create_all(bind=engine)
-    print("Done.")
+    print("完了")
 
 
 if __name__ == "__main__":

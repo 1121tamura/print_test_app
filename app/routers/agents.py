@@ -3,9 +3,10 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import Agent, utc_now
+from app.dependencies import verify_api_key
+from app.models import Agent, Job, utc_now
 
-router = APIRouter(prefix="/agents", tags=["agents"])
+router = APIRouter(prefix="/agents", tags=["agents"], dependencies=[Depends(verify_api_key)])
 
 
 class RegisterRequest(BaseModel):
@@ -44,18 +45,52 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
 @router.post("/{agent_id}/status", status_code=status.HTTP_204_NO_CONTENT)
 def update_status(agent_id: str, body: StatusRequest, db: Session = Depends(get_db)):
     """
-    Agent の状態を受け取り、last_seen_at を更新する。
+    Agent の状態を受け取り、対応するカラムを更新する。
     定期送信ではなくイベント発生時に送信される。
 
-    status の種類:
-    - online   : Agent 起動時（job_id なし）
-    - printing : 印刷開始直前（job_id あり）
-    - success  : 印刷完了時（job_id あり）
-    - error    : 印刷失敗時 / PDF取得失敗時（job_id あり）
+    status の種類と更新カラム:
+    - online        : Agent 起動時        → last_seen_at
+    - job_received  : job 受信時          → last_seen_at, last_job_received_at
+    - printing      : 印刷開始直前        → last_seen_at, last_print_started_at, jobs.status
+    - success       : 印刷完了時          → last_seen_at, last_print_completed_at, jobs.status
+    - error         : 印刷失敗時          → last_seen_at, last_error_at, last_error_message, jobs.status
     """
     agent = db.query(Agent).filter(Agent.id == agent_id).first()
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
 
-    agent.last_seen_at = utc_now()
+    now = utc_now()
+    agent.last_seen_at = now
+
+    if body.status == "job_received":
+        agent.last_job_received_at = now
+
+    elif body.status == "printing":
+        agent.last_print_started_at = now
+        _update_job_status(db, body.job_id, "printing")
+
+    elif body.status == "success":
+        agent.last_print_completed_at = now
+        _update_job_status(db, body.job_id, "success")
+
+    elif body.status == "error":
+        agent.last_error_at = now
+        agent.last_error_message = body.error_message
+        _update_job_status(db, body.job_id, "error", body.error_message)
+
     db.commit()
+
+
+def _update_job_status(
+    db: Session,
+    job_id: str | None,
+    new_status: str,
+    error_message: str | None = None,
+) -> None:
+    """job_id が指定されている場合に jobs.status を更新する。"""
+    if not job_id:
+        return
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if job:
+        job.status = new_status
+        job.error_message = error_message
