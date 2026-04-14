@@ -14,9 +14,12 @@ class Settings(BaseSettings):
     db_password: str = Field(alias="DB_PASSWORD")
     redis_host: str = Field(alias="REDIS_HOST")
     redis_port: int = Field(alias="REDIS_PORT")
+    storage_type: str = Field(default="local", alias="STORAGE_TYPE")          # "local" のみ対応（将来拡張用）
+    storage_base_dir: str = Field(default="", alias="STORAGE_BASE_DIR")        # PDFのベースディレクトリ（空の場合はkeyをそのまま絶対パスとして扱う）
+    pdf_retention_days: int = Field(default=30, alias="PDF_RETENTION_DAYS")    # PDF保管日数（一覧取得の絞り込みに使用）
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=".env.dev",
         env_file_encoding="utf-8",
         extra="ignore",
     )

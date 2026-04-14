@@ -1,7 +1,10 @@
+from datetime import timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.db import get_db
 from app.dependencies import verify_api_key
 from app.models import Agent, Job, utc_now
@@ -79,6 +82,49 @@ def update_status(agent_id: str, body: StatusRequest, db: Session = Depends(get_
         _update_job_status(db, body.job_id, "error", body.error_message)
 
     db.commit()
+
+
+class PdfItem(BaseModel):
+    job_id: str
+    title: str
+    status: str
+    created_at: str
+
+
+@router.get("/{agent_id}/pdfs", response_model=list[PdfItem])
+def list_pdfs(agent_id: str, db: Session = Depends(get_db)):
+    """
+    agent_id に紐づく PDF 一覧を返す。
+    pdf_storage_key が存在し、かつ PDF_RETENTION_DAYS 日以内に作成されたジョブが対象。
+    再印刷時は返された job_id を使って POST /jobs/{job_id}/reprint を呼ぶ。
+    """
+    agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    if not agent:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+    retention_days = get_settings().pdf_retention_days
+    cutoff = utc_now().replace(tzinfo=None) - timedelta(days=retention_days)
+
+    jobs = (
+        db.query(Job)
+        .filter(
+            Job.agent_id == agent_id,
+            Job.pdf_storage_key.isnot(None),
+            Job.created_at >= cutoff,
+        )
+        .order_by(Job.created_at.desc())
+        .all()
+    )
+
+    return [
+        PdfItem(
+            job_id=job.id,
+            title=job.title,
+            status=job.status,
+            created_at=job.created_at.isoformat(),
+        )
+        for job in jobs
+    ]
 
 
 def _update_job_status(

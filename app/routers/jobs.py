@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -7,6 +7,7 @@ from app.db import get_db
 from app.dependencies import verify_api_key
 from app.models import Agent, Job, utc_now
 from app.redis_client import get_redis
+from app.storage import get_storage
 
 router = APIRouter(prefix="/jobs", tags=["jobs"], dependencies=[Depends(verify_api_key)])
 
@@ -81,7 +82,7 @@ def get_job(job_id: str, db: Session = Depends(get_db)):
 def get_pdf(job_id: str, db: Session = Depends(get_db)):
     """
     PDF をバイナリで返す。
-    pdf_storage_key をローカルファイルパスとして扱い、ファイルを返す。
+    ストレージから pdf_storage_key に対応する PDF を取得して返す。
     Agent は受信後に印刷する。再印刷対応のため PDF は一定期間保持する。
     """
     job = db.query(Job).filter(Job.id == job_id).first()
@@ -89,7 +90,11 @@ def get_pdf(job_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     if not job.pdf_storage_key:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="PDF not found")
-    return FileResponse(job.pdf_storage_key, media_type="application/pdf")
+    try:
+        pdf_bytes = get_storage().get(job.pdf_storage_key)
+    except FileNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="PDF not found")
+    return Response(content=pdf_bytes, media_type="application/pdf")
 
 
 @router.post("/{job_id}/result", status_code=status.HTTP_204_NO_CONTENT)
