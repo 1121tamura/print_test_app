@@ -4,6 +4,7 @@
     "dockerfile": "Dockerfile"
   },
   "workspaceFolder": "/workspaces/print_test_app",
+  "runArgs": ["--network", "print_test_db_default"],
   "forwardPorts": [8000],
   "containerEnv": {
     "PYTHONDONTWRITEBYTECODE": "1",
