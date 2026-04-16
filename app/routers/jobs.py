@@ -78,6 +78,14 @@ def get_job(job_id: str, db: Session = Depends(get_db)):
     """
     ジョブ詳細を返す。
     Agent が Redis Stream から job_id を受信した後に呼び出す。
+    「このジョブは何を印刷するのか」「PDFはどこにあるか」を知るためのもの。
+    このエンドポイントと下記の「get_pdf」はセットで、job_id を受け取ったら必ず連続して呼ぶ。
+        事前チェック:
+        - job_id が存在しない → 404
+        - 存在するが pdf_storage_key がない → 200（pdf_storage_key は任意項目のため）
+        - 存在し、pdf_storage_key もある → 200
+        Agent は受信した job_id を使ってこのエンドポイントを呼び出し、返された pdf_storage_key をもとに PDF を取得する。
+        再印刷の際も同様にこのエンドポイントを呼び出す。
     """
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:

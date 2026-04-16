@@ -76,6 +76,10 @@ Content-Type: application/json
 #### ジョブ作成
 
 ```
+実運用では業務システム側がジョブを作成し、Redis Stream に XADD する想定。
+実運用環境では POST /jobs は存在しない想定。
+つまり業務システムは直接 Redis Stream に XADD するだけで、このバックエンドを経由しない。
+
 POST /jobs
 Content-Type: application/json
 
