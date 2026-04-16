@@ -26,10 +26,25 @@ class StatusRequest(BaseModel):
     job_id: str | None = None
     error_message: str | None = None
 
+    """
+    Agent側では印刷の各ステップで POST /agents/{agent_id}/status を呼ぶ必要があります。流れはこうです：
+    agents.py のエンドポイントはすべて print-agent（クライアント側のプログラム）から呼ばれる
+    1. Agent 起動
+    → status: "online"
+    2. Job を受信
+    → status: "job_received"
+    3. 印刷開始直前
+    → status: "printing",  job_id: "xxx"
+    4a. 印刷成功
+    → status: "success",   job_id: "xxx"
+    4b. 印刷失敗
+    → status: "error",     job_id: "xxx",  error_message: "..."
+    """
 
 @router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_200_OK)
 def register(body: RegisterRequest, db: Session = Depends(get_db)):
     """
+    Agent 起動時、自分（ローカルPC=購買PC）の MAC アドレスを登録して agent_id を取得するエンドポイント。
     Agent を登録し、UUID を返す。
     同一 mac_address で再登録が来た場合は既存の UUID をそのまま返す（べき等）。
     Agent の初回起動時に呼ばれる。
@@ -48,15 +63,29 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
 @router.post("/{agent_id}/status", status_code=status.HTTP_204_NO_CONTENT)
 def update_status(agent_id: str, body: StatusRequest, db: Session = Depends(get_db)):
     """
+    印刷の各イベント発生時に状態を通知するエンドポイント。
     Agent の状態を受け取り、対応するカラムを更新する。
     定期送信ではなくイベント発生時に送信される。
+    レスポンスは常に 204 No Content（ボディなし）。
 
-    status の種類と更新カラム:
-    - online        : Agent 起動時        → last_seen_at
-    - job_received  : job 受信時          → last_seen_at, last_job_received_at
-    - printing      : 印刷開始直前        → last_seen_at, last_print_started_at, jobs.status
-    - success       : 印刷完了時          → last_seen_at, last_print_completed_at, jobs.status
-    - error         : 印刷失敗時          → last_seen_at, last_error_at, last_error_message, jobs.status
+    status の種類・送信タイミング・必須フィールド・更新カラム:
+    - online        : Agent 起動時        必須: status                               → last_seen_at
+    - job_received  : Job 受信時          必須: status  ※job_id 送っても無視         → last_seen_at, last_job_received_at
+    - printing      : 印刷開始直前        必須: status, job_id                       → last_seen_at, last_print_started_at, jobs.status
+    - success       : 印刷完了時          必須: status, job_id                       → last_seen_at, last_print_completed_at, jobs.status
+    - error         : 印刷失敗時          必須: status, job_id, error_message        → last_seen_at, last_error_at, last_error_message, jobs.status
+
+    リクエスト例:
+        online      : {"status": "online"}
+        job_received: {"status": "job_received"}
+        printing    : {"status": "printing",     "job_id": "<job_id>"}
+        success     : {"status": "success",      "job_id": "<job_id>"}
+        error       : {"status": "error",        "job_id": "<job_id>", "error_message": "Printer not found"}
+
+    レスポンス例:
+        成功: 204 No Content（ボディなし）
+        Agent 未登録: 403 {"detail": "Not authenticated"}  ※ X-API-Key ヘッダーなし
+        Agent 不明:   404 {"detail": "Agent not found"}
     """
     agent = db.query(Agent).filter(Agent.id == agent_id).first()
     if not agent:
@@ -94,6 +123,7 @@ class PdfItem(BaseModel):
 @router.get("/{agent_id}/pdfs", response_model=list[PdfItem])
 def list_pdfs(agent_id: str, db: Session = Depends(get_db)):
     """
+    再印刷のために過去の PDF 一覧を取得するエンドポイント。
     agent_id に紐づく PDF 一覧を返す。
     pdf_storage_key が存在し、かつ PDF_RETENTION_DAYS 日以内に作成されたジョブが対象。
     再印刷時は返された job_id を使って POST /jobs/{job_id}/reprint を呼ぶ。

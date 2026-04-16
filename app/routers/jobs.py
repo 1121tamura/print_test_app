@@ -45,6 +45,13 @@ def create_job(body: JobCreateRequest, db: Session = Depends(get_db)):
     印刷ジョブを作成する。検証用エンドポイント。
     実運用では業務システム側がジョブを作成し、Redis Stream に XADD する想定。
 
+    job_id の発行フロー:
+    1. このエンドポイントでジョブを作成 → サーバーが job_id（UUID）を採番して DB に保存
+    2. Redis Stream（print_jobs:{agent_id}）に job_id を投入
+    3. Agent が Redis Stream を監視し job_id を受信
+    4. Agent が GET /jobs/{job_id} でジョブ詳細を取得
+    5. 以降の POST /agents/{agent_id}/status で job_id を使って状態を通知
+
     事前チェック:
     - agent_id が存在しない → 404
     - is_active が False（利用不可端末） → 422

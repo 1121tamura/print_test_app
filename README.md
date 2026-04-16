@@ -117,6 +117,70 @@ POST /jobs/{job_id}/reprint
 
 元ジョブの `pdf_storage_key` を引き継いだ新規ジョブを作成し、Redis に投入する。
 
+## 実運用フロー
+
+業務システム・サーバー・Agent（購買PC上のプログラム）の連携フロー全体像。
+
+```
+【業務システム側】
+    1. 購買処理など印刷が必要なタイミングで
+       POST /jobs  { agent_id, title, pdf_storage_key }
+       → サーバーが job_id（UUID）を採番して DB に保存
+       → Redis Stream（print_jobs:{agent_id}）に job_id を投入
+          ※ 業務システムは Agent の状態を気にせず投げるだけでよい
+
+【Agent側（購買PC上で常駐するプログラム）】
+    2. PC 起動時に一度だけ実行
+       POST /agents/register  { mac, hostname }
+       → サーバーが agent_id（UUID）を発行・保存
+          ※ 同一 MAC アドレスで再登録しても同じ agent_id が返る（べき等）
+       → 取得した agent_id をローカルに保存して以降の通信で使う
+
+    3. 登録完了後、起動を通知
+       POST /agents/{agent_id}/status  {"status": "online"}
+
+    4. Redis Stream（print_jobs:{agent_id}）を常時監視
+       → 業務システムが投入した job_id を非同期で受信
+
+    5. job_id を受信したことを通知
+       POST /agents/{agent_id}/status  {"status": "job_received"}
+          ※ job_id を送っても現状サーバー側では無視される
+
+    6. ジョブの詳細情報（タイトル・PDF の場所など）を取得
+       GET /jobs/{job_id}
+
+    7. PDF バイナリを取得してプリンターに送る準備
+       GET /jobs/{job_id}/pdf
+
+    8. 印刷コマンドを発行する直前に通知
+       POST /agents/{agent_id}/status  {"status": "printing", "job_id": "..."}
+          ※ jobs.status が "printing" に更新される
+
+    9a. 印刷が正常に完了した場合
+        POST /agents/{agent_id}/status  {"status": "success", "job_id": "..."}
+           ※ jobs.status が "success" に更新される
+
+    9b. 印刷が失敗した場合
+        POST /agents/{agent_id}/status  {"status": "error", "job_id": "...", "error_message": "プリンターが見つかりません"}
+           ※ jobs.status が "error" に更新され、error_message も保存される
+
+【再印刷が必要な場合】
+   10. 過去に印刷した PDF の一覧を取得（直近 PDF_RETENTION_DAYS 日以内が対象）
+       GET /agents/{agent_id}/pdfs
+
+   11. 対象の job_id を指定して再印刷ジョブを作成
+       POST /jobs/{job_id}/reprint
+       → 元ジョブの pdf_storage_key を引き継いだ新規ジョブが作られ Redis に投入
+       → 4 以降と同じ流れで印刷される
+```
+
+> **設計のポイント：**
+> 業務システムと Agent は Redis Stream を介して疎結合になっている。
+> 業務システムは Agent がオンラインかどうかを気にせず job を投げるだけでよく、
+> Agent は Stream を監視して非同期に拾う。
+> Agent の状態管理（`agents` テーブル）と印刷結果管理（`jobs` テーブル）は分離されており、
+> `POST /agents/{agent_id}/status` の通知を受けるたびに両テーブルが更新される。
+
 ## マイグレーション
 
 Alembicを使用する。Django の makemigrations / migrate に相当する。
