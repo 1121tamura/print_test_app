@@ -1,0 +1,15 @@
+services:
+  print_test_app:
+    container_name: print-test-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ..:/workspaces/print_test_app:cached
+    command: sleep infinity
+    networks:
+      - print_test_db_default
+
+networks:
+  print_test_db_default:
+    external: true
